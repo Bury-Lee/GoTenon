@@ -33,3 +33,10 @@ type PluginInfo interface {
 	// End 在卸载前调用，负责资源回收与持久化。
 	End() error
 }
+
+// Contextual 是可选接口：插件实现后，装载器会传入一个可取消的 context，
+// 超时/取消时可协作退出（v0.2 协作式取消）。
+// 未实现时装载器回退调用 Apply。
+type Contextual interface {
+	ApplyContext(ctx context.Context, gctx *GoTenonContext, cfg any) error
+}

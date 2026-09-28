@@ -1,13 +1,17 @@
 package GoTenon
 
+import "sync"
+
 // Manager 是中央管理器：
 // 插件钩子由工作协程执行，状态由调度者统一写回。
+// 公开方法由 mu 串行化，保证并发 Register/Enable/Disable/Update 安全。
 type Manager struct {
 	PluginTable PluginTable
 	Loader      Loader
 	Logger      Logger // 框架日志出口；nil 静默
 	root        *GoTenonContext
 	rt          map[string]*PluginRuntime
+	mu          sync.Mutex // 串行化公开操作
 
 	// 并行装载上限；<=0 默认 4（Loader 实现 ConcurrencyLoader 时可覆盖）
 	Concurrency int
@@ -49,6 +53,8 @@ func (m *Manager) ensure() {
 
 // Register 登记插件：查重 → 插件自身的 Register 钩子 → 写入插件表 → 依赖成环检测 → Loader 扩展钩子。任一步失败都回滚
 func (m *Manager) Register(p PluginInfo, cfg any) (*PluginRuntime, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.ensure()
 	if p == nil {
 		return nil, newErr(ErrInvalidPlugin, "manager: nil plugin")
@@ -91,6 +97,8 @@ func (m *Manager) Register(p PluginInfo, cfg any) (*PluginRuntime, error) {
 // Delete 删除插件：卸载自身与失去引用的依赖，从插件表移除，并通知 Loader。
 // 仍有已装载的依赖者时拒绝（先禁用它们）。
 func (m *Manager) Delete(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rt, err := m.lookup(name)
 	if err != nil {
 		return err
@@ -117,6 +125,8 @@ func (m *Manager) Delete(name string) error {
 
 // Enable 启用插件：置启用标志并通知 Loader，随后收敛——依赖闭包自动装载（依赖先行），未注册的依赖使插件保持 PENDING而不报错。
 func (m *Manager) Enable(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rt, err := m.lookup(name)
 	if err != nil {
 		return err
@@ -143,6 +153,8 @@ func (m *Manager) Enable(name string) error {
 
 // Disable 禁用插件：清启用标志并通知 Loader，随后收敛——没有依赖者时插件卸载，其依赖因引用归零自动卸载，上下文一并清理；仍被启用者依赖时保持装载。
 func (m *Manager) Disable(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rt, err := m.lookup(name)
 	if err != nil {
 		return err
@@ -173,17 +185,22 @@ func (m *Manager) hook(name string) error {
 
 // Get 按插件名（句柄）读取运行时信息。
 func (m *Manager) Get(name string) (*PluginRuntime, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rt := m.rt[name]
 	return rt, rt != nil
 }
 
 // Update 按插件名（句柄）更新配置；插件更新自己时传自己的名字。
-// 已装载的插件按新配置重载（重载会更换上下文）。
+// 已装载的插件按新配置重载；新配置装载失败时回滚旧配置（事务化）。
 func (m *Manager) Update(name string, cfg any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	rt, err := m.lookup(name)
 	if err != nil {
 		return err
 	}
+	oldCfg := rt.Config
 	rt.Config = cfg
 	rt.Err = nil
 	if rt.Loaded() {
@@ -194,6 +211,13 @@ func (m *Manager) Update(name string, cfg any) error {
 	err = m.converge()
 	rt.settle()
 	if err != nil {
+		// 事务化：新配置失败则回滚旧配置并重载
+		rt.Config = oldCfg
+		rt.Err = nil
+		if e2 := m.converge(); e2 != nil {
+			m.logf(LevelWarn, "plugin %q rollback after failed update: %v", name, e2)
+		}
+		rt.settle()
 		return err
 	}
 	return m.hook(name)
@@ -202,6 +226,8 @@ func (m *Manager) Update(name string, cfg any) error {
 // Available 服务可用性检查：任一已装载插件的上下文槽位提供了 name（值非空）。
 // 只做存在性判断，遍历顺序无关紧要。
 func (m *Manager) Available(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, rt := range m.rt {
 		if !rt.Loaded() || rt.Context == nil {
 			continue
@@ -214,14 +240,20 @@ func (m *Manager) Available(name string) bool {
 }
 
 // Send 把消息发给目标插件：调用它的 DealWithMessage(msg.Data)；
-// 插件不存在或未装载返回错误。
+// 插件不存在或未装载返回错误；运行期 panic 被隔离为 error。
 func (m *Manager) Send(msg Message) error {
+	m.mu.Lock()
 	rt := m.rt[msg.Name]
 	if rt == nil {
+		m.mu.Unlock()
 		return newErr(ErrNotProvided, "manager: plugin %q not registered", msg.Name)
 	}
 	if !rt.Loaded() {
+		m.mu.Unlock()
 		return newErr(ErrNotProvided, "manager: plugin %q not loaded", msg.Name)
 	}
-	return rt.Plugin.DealWithMessage(msg.Data)
+	p := rt.Plugin
+	m.mu.Unlock() // 调用插件前释放锁，避免插件回调 Manager 造成死锁
+
+	return recoverToError(func() error { return p.DealWithMessage(msg.Data) })
 }

@@ -19,6 +19,7 @@ type GoTenonContext struct {
 	labels    map[string]*Slot // label 共享槽：name + "\x00" + label -> slot
 	intercept map[string][]any // 本层追加的配置层：name -> 配置栈
 	effects   []*effectScope   // effect 栈：effects[0] 为基座，栈顶为当前 scope
+	active    bool             // 生命周期活动标志：dispose 后置 false，注册被拒(ErrInactiveEffect)
 }
 
 // Slot 表示一个被隔离出来的槽位。
@@ -38,6 +39,7 @@ func New(name string) *GoTenonContext {
 		labels:    make(map[string]*Slot),
 		intercept: make(map[string][]any),
 		effects:   []*effectScope{{label: name}},
+		active:    true,
 	}
 }
 
@@ -51,6 +53,7 @@ func (c *GoTenonContext) Extend(name string) *GoTenonContext {
 		labels:    make(map[string]*Slot),
 		intercept: make(map[string][]any),
 		effects:   []*effectScope{{label: name}},
+		active:    true,
 	}
 	c.mu.Lock()
 	c.children = append(c.children, child)

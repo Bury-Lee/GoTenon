@@ -28,11 +28,13 @@ GoTenon（榫卯）取「构件咬合、可拆可换」之意，是一个宿主�
 ## 快速开始
 
 ```bash
-cd example && go run .
+cd example/game_example && go run .        # 游戏主进程模拟
+cd example/web_example  && go run .        # 在线服务网站 + 路由/gRPC 扩展
+cd example/microservice_example && go run . # 微服务插件版(发现/负载均衡/拦截器/熔断/追踪)
 ```
 
-最小示例（完整可运行版本见 [example/main.go](example/main.go)，
-插件实现见 [example/plugin.go](example/plugin.go)）：
+最小示例（完整可运行版本见 [example/game_example/main.go](example/game_example/main.go)，
+插件实现见 [example/game_example/plugin.go](example/game_example/plugin.go)）：
 
 ```go
 package main
@@ -226,7 +228,9 @@ err := GoTenon.Run(                    // 独立启动
 | `logger.go` | 日志出口 |
 | `errors.go` | 错误码与 `CordisError` |
 | `enter.go` | `Run` 入口与 `Option` |
-| `example/` | 独立模块示例：游戏主进程模拟（`main.go` + `plugin.go`，经 `replace` 引用根模块） |
+| `example/game_example/` | 独立模块示例：游戏主进程模拟（`main.go` + `plugin.go`，经 `replace` 引用根模块） |
+| `example/web_example/` | 独立模块示例：在线服务网站 + 可撤销路由 / gRPC 微服务扩展（`DESIGN.md` 讲设计，`main.go` + `plugin.go` + `service.go` 可运行） |
+| `example/microservice_example/` | 独立模块示例：微服务插件版（服务发现 / 负载均衡 / 鉴权限流熔断追踪拦截器插件 / 多实例灰度，`DESIGN.md` + `main.go` + `plugin.go` + `service.go`） |
 
 ## 设计原则
 
@@ -258,7 +262,7 @@ err := GoTenon.Run(                    // 独立启动
 ```bash
 go build ./...          # 构建内核
 go vet ./...            # 静态检查
-cd example; go run .    # 运行示例（独立模块）
+cd example/game_example; go run .    # 运行示例（独立模块）
 ```
 
 测试用例待补，是路线图 v0.2 的首要目标。
@@ -267,3 +271,5 @@ cd example; go run .    # 运行示例（独立模块）
 
 - [docs/architecture.html](docs/architecture.html) —— 架构图
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 功能规划与里程碑
+- [example/web_example/DESIGN.md](example/web_example/DESIGN.md) —— 在线服务网站 + 路由 / gRPC 微服务扩展设计文档
+- [example/microservice_example/DESIGN.md](example/microservice_example/DESIGN.md) —— 微服务插件版设计文档(发现 / 负载均衡 / 拦截器 / 熔断 / 追踪)

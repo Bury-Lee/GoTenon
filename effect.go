@@ -93,8 +93,15 @@ func (c *GoTenonContext) Register(d Disposer) Disposer {
 		return Noop()
 	}
 	d = once(d)
-	// 挂到栈顶 scope；栈空（已 dispose）时补一个基座，避免 nil 解引用
 	c.mu.Lock()
+	if !c.active {
+		// 上下文已 dispose（如装载超时后）：拒绝注册，避免副作用逃逸而被泄漏
+		c.mu.Unlock()
+		return func() error {
+			return newErr(ErrInactiveEffect, "context %q is inactive; registration rejected", c.Name)
+		}
+	}
+	// 挂到栈顶 scope；栈空时补一个基座，避免 nil 解引用
 	if len(c.effects) == 0 {
 		c.effects = append(c.effects, &effectScope{label: c.Name})
 	}
@@ -125,6 +132,7 @@ func (c *GoTenonContext) Effect(body func() error, label string) (Disposer, erro
 // dispose 逆序回收 ctx 的全部 Disposer（卸载时由 Manager 调用）。
 func (c *GoTenonContext) dispose() error {
 	c.mu.Lock()
+	c.active = false
 	scopes := c.effects
 	c.effects = nil
 	c.mu.Unlock()

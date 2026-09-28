@@ -1,10 +1,22 @@
 package GoTenon
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
+
+// recoverToError 执行 fn，并把 panic 转为 error（隔离运行期崩溃，交由调度器处理）。
+func recoverToError(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("GoTenon: panic: %v", r)
+		}
+	}()
+	return fn()
+}
 
 // loadBatch 并行装载一批互不依赖的插件；状态由调度者统一写回。
 func (m *Manager) loadBatch(batch []*PluginRuntime) error {
@@ -105,27 +117,44 @@ func parallel(limit, n int, run func(i int)) {
 }
 
 // loadOne 装载单个插件：创建子上下文 → Apply → Start → Run。
-// 超时预算由 Loader.Timeout 提供；超时后放弃等待、回滚上下文并返回 ErrTimeout。
-// 装载协程无法强杀，插件应自行控制装载耗时。
+// 超时预算由 Loader.Timeout 提供；超时后放弃等待、取消 ctx、回滚上下文并返回 ErrTimeout。
+// panic 被 recover 为 error；实现 Contextual 的插件可协作取消。
 func (m *Manager) loadOne(rt *PluginRuntime, timeout time.Duration) error {
 	name := rt.Plugin.Name()
 	ctx := m.root.Extend(name)
 
-	// 钩子在独立协程执行：超时只能放弃等待，无法强杀，插件应自行控制耗时
+	// 协作式取消：取消/超时会向实现 Contextual 的插件传递 ctx.Done()
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if timeout > 0 {
+		var tcancel context.CancelFunc
+		runCtx, tcancel = context.WithTimeout(runCtx, timeout)
+		defer tcancel()
+	}
+
+	// 钩子在独立协程执行：panic 转 error；超时只能放弃等待，无法强杀
 	done := make(chan error, 1)
 	go func() {
-		err := rt.Plugin.Apply(ctx, rt.Config)
-		if err == nil {
-			if err = rt.Plugin.Start(); err != nil {
-				_ = rt.Plugin.End()
+		done <- recoverToError(func() error {
+			var err error
+			if cv, ok := rt.Plugin.(Contextual); ok {
+				err = cv.ApplyContext(runCtx, ctx, rt.Config)
+			} else {
+				err = rt.Plugin.Apply(ctx, rt.Config)
 			}
-		}
-		if err == nil {
-			if err = rt.Plugin.Run(); err != nil {
-				_ = rt.Plugin.End()
+			if err == nil {
+				if err = rt.Plugin.Start(); err != nil {
+					_ = rt.Plugin.End()
+					return err
+				}
 			}
-		}
-		done <- err
+			if err == nil {
+				if err = rt.Plugin.Run(); err != nil {
+					_ = rt.Plugin.End()
+				}
+			}
+			return err
+		})
 	}()
 
 	var err error
