@@ -24,6 +24,12 @@ const (
 	ErrDuplicate ErrorCode = "DUPLICATE"
 	// ErrTimeout：操作超过超时预算。
 	ErrTimeout ErrorCode = "TIMEOUT"
+	// ErrMessageTypeMismatch：消息 Type 与 Data 实际类型不匹配(系统解析失败)。
+	ErrMessageTypeMismatch ErrorCode = "MESSAGE_TYPE_MISMATCH"
+	// ErrSignalUnhandled：内核收到无法处理的信号。
+	ErrSignalUnhandled ErrorCode = "SIGNAL_UNHANDLED"
+	// ErrMessageLoop：消息嵌套/转发超过深度上限，疑似自环。
+	ErrMessageLoop ErrorCode = "MESSAGE_LOOP"
 )
 
 // CordisError 携带稳定错误码、可读信息与底层错误。

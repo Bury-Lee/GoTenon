@@ -1,7 +1,7 @@
 package GoTenon
 
 // PluginManager 是包级默认管理器：Run 成功后写入，宿主经此访问。
-var PluginManager Manager
+var PluginManager *Manager
 
 // Run 启动默认核心调度器：创建根上下文与 Manager，注册插件并驱动到收敛。
 //
@@ -32,7 +32,7 @@ func Run(opts ...Option) error {
 			return err
 		}
 	}
-	PluginManager = *m
+	PluginManager = m
 	return nil
 }
 

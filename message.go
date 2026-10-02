@@ -1,80 +1,87 @@
 package GoTenon
 
-import (
-	"context"
-	"sync"
+// message.go —— 内核消息模型与默认系统消息处理器。
+//
+// Message 是内核统一消息信封 {Name, Type, Data}：
+//   - Name == "" 表示发往系统/内核，由 MessageProcesser 默认实现按 Type 解析；
+//   - Name != "" 表示发往指定组件，内核只做查表与原封投递，由组件自行解包。
+//
+// MessageType 是信封上的类型标签：0–15 为系统保留，16+ 为组件自定义。
+
+// MessageType 是消息类型码(discriminator)。
+type MessageType int
+
+const (
+	// ---- 系统保留段：0–15(共 16 个)----
+	TypeUnknown MessageType = 0 // 未指定
+	TypeContext MessageType = 1 // Data: context.Context(取消/超时/追踪)
+	TypeMessage MessageType = 2 // Data: *Message(嵌套/转发)
+	TypeRaw     MessageType = 3 // Data: any(自定义/能力调用载荷)
+	TypeSignal  MessageType = 4 // Data: *SignalRequest(系统信号)
+	TypeReply   MessageType = 5 // Data: *Message(应答)
+	TypeJSON    MessageType = 6 // Data: []byte 或 map(JSON 载荷)
+	TypeIndex   MessageType = 7 // Data: IndexEvent(索引变更通知)
+	// 8–15 继续由系统保留
+	TypeSystemReservedEnd MessageType = 15
+
+	// ---- 组件自定义段：16+ ----
+	TypeCustomBase MessageType = 16
 )
 
-// message.go —— 事件与消息处理。
-//
-// Message 是插件间通信的消息：Name 呼叫哪个插件，Data 携带信号（context）。
-// MessageProcessor 是独立的事件处理层，默认实现为 DefaultMessageProcessor：
-// 注册事件发送管道，并把消息交给 Manager 路由。
-
-// Message 是插件间通信的消息。
+// Message 是内核统一消息信封。
 type Message struct {
-	Name string          // 目标插件名
-	Data context.Context // 携带的信号
+	Name string      // 目标；空 = 发往系统/内核
+	Type MessageType // 类型码：信封标签，语义由接收方解释
+	Data any         // 载荷
 }
 
-// MessageProcessor 是独立的事件处理层，提供默认实现 DefaultMessageProcessor。
-//
-//   - RegisterPipe：注册事件发送管道；
-//   - Handle：调用 Manager 处理事件并返回 error（插件不存在/未装载等）。
-type MessageProcessor interface {
-	// RegisterPipe 注册事件发送管道：写进管道的消息被依次处理；
-	// 返回的取消函数发出停止信号，消费协程退出（不死协程）。
-	RegisterPipe(buffer int) (chan<- Message, func())
-	// Handle 调用 Manager 处理事件并返回 error（插件不存在/未装载/处理失败）。
-	Handle(msg Message) error
+// MessageProcesser 是系统/内核的默认消息处理器。
+type MessageProcesser interface {
+	// Handle 处理一条消息：系统消息，或把 Message 原封投递给目标组件。
+	// 返回的 reply 为 nil 表示无需应答。
+	Handle(msg *Message) (*Message, error)
 }
 
-// DefaultMessageProcessor 是 MessageProcessor 的默认实现。
-// OnError 可选，用于接收管道消费中的错误（Logger 落地前的出口）。
-type DefaultMessageProcessor struct {
+// DefaultMessageProcesser 是 MessageProcesser 的默认系统实现。
+type DefaultMessageProcesser struct {
 	Manager *Manager
-	OnError func(msg Message, err error)
 }
 
 // NewMessageProcessor 创建默认处理器。
-func NewMessageProcessor(m *Manager) *DefaultMessageProcessor {
-	return &DefaultMessageProcessor{Manager: m}
+func NewMessageProcessor(m *Manager) *DefaultMessageProcesser {
+	return &DefaultMessageProcesser{Manager: m}
 }
 
-// RegisterPipe 注册一条事件发送管道：写进管道的消息被依次 Handle。
-// 返回的取消函数幂等：发出停止信号，消费协程退出。
-func (p *DefaultMessageProcessor) RegisterPipe(buffer int) (chan<- Message, func()) {
-	in := make(chan Message, buffer)
-	stop := make(chan struct{})
-	var once sync.Once
-
-	// 消费协程：串行处理管道消息，收到 stop 信号即退出
-	go func() {
-		for {
-			select {
-			case msg, ok := <-in:
-				if !ok {
-					return
-				}
-				if err := p.Handle(msg); err != nil && p.OnError != nil {
-					p.OnError(msg, err)
-				}
-			case <-stop:
-				return
-			}
-		}
-	}()
-
-	cancel := func() {
-		once.Do(func() { close(stop) })
+// Handle 实现 MessageProcesser：系统分支按 Type 解析，其它原封投递。
+func (p *DefaultMessageProcesser) Handle(msg *Message) (*Message, error) {
+	if msg == nil {
+		return nil, newErr(ErrInvalidPlugin, "processor: nil message")
 	}
-	return in, cancel
-}
-
-// Handle 调用 Manager 处理事件：目标插件不存在或未装载返回错误。
-func (p *DefaultMessageProcessor) Handle(msg Message) error {
 	if p.Manager == nil {
-		return newErr(ErrInvalidPlugin, "processor: nil manager")
+		return nil, newErr(ErrInvalidPlugin, "processor: nil manager")
 	}
-	return p.Manager.Send(msg)
+	if msg.Name == "" {
+		return p.Manager.handleSystem(msg)
+	}
+	return p.deliver(msg)
+}
+
+// deliver 把 Message 原封投递给目标组件；内核不替组件解包。
+func (p *DefaultMessageProcesser) deliver(msg *Message) (*Message, error) {
+	m := p.Manager
+	m.mu.Lock()
+	rt := m.rt[msg.Name]
+	if rt == nil {
+		m.mu.Unlock()
+		return nil, newErr(ErrNotProvided, "manager: plugin %q not registered", msg.Name)
+	}
+	if !rt.Loaded() {
+		m.mu.Unlock()
+		return nil, newErr(ErrNotProvided, "manager: plugin %q not loaded", msg.Name)
+	}
+	plugin := rt.Plugin
+	m.mu.Unlock() // 调用组件前释放锁，避免组件回调 Manager 造成死锁
+
+	err := recoverToError(func() error { return plugin.DealWithMessage(*msg) })
+	return nil, err
 }

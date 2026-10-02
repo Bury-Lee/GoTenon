@@ -1,9 +1,10 @@
-// plugin.go —— 示例插件集：每个插件针对 GoTenon 的一项或多项能力，
-// 同时故意覆盖失败、超时、成环、缺依赖等边界路径。
+// plugin.go —— 组件集：演示内核四件套(状态 / 能力 / 消息 / 信号)与可逆生命周期。
+//
+// 约定：组件在装载期(Apply/Start/Run)只经 ctx 槽位拿到宿主 API，
+// 不回调 Manager(装载期消费者持有 Manager 锁，回调会重入死锁)。
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -14,211 +15,245 @@ import (
 
 // ---------- 宿主契约 ----------
 
-// Game 是游戏主进程暴露给插件的宿主 API。
+// Game 是宿主暴露给组件的 API。宿主自持服务表(Provide/Service)，
+// 组件借此在装载期互通，而不必回调 Manager。
 type Game interface {
 	Log(msg string)
 	PlayerLevel() int
 	SetHUD(text string)
 	HUD() string
-	// Service 是跨插件服务解析的逃生口：v0.1 中插件上下文互为兄弟，
-	// 无法直接解析对方 Isolate 出来的槽位，只能经宿主中转。
-	Service(plugin, slot string) (any, bool)
+	Provide(name string, v any)
+	Service(name string) (any, bool)
 }
 
-// Renderer 是 render 插件提供的能力。
-type Renderer interface {
-	Draw(text string)
-	Closed() bool
-}
-
-// basePlugin 提供 PluginInfo 的默认实现，插件只覆写关心的钩子。
-type basePlugin struct{}
-
-func (basePlugin) Desc() map[string]string                  { return nil }
-func (basePlugin) Inject() []string                         { return nil }
-func (basePlugin) Config() map[string]string                { return nil }
-func (basePlugin) Register() error                          { return nil }
-func (basePlugin) Apply(*GoTenon.GoTenonContext, any) error { return nil }
-func (basePlugin) Start() error                             { return nil }
-func (basePlugin) Run() error                               { return nil }
-func (basePlugin) End() error                               { return nil }
-func (basePlugin) DealWithMessage(context.Context) error    { return nil }
-
-// ---------- storage：槽位 + 副作用 + 配置层 ----------
-
-type storagePlugin struct {
-	basePlugin
-	mu     sync.Mutex // closed 在卸载协程写、消息协程读
-	ctx    *GoTenon.GoTenonContext
-	prefix string
-	closed bool
-}
-
-func (p *storagePlugin) Name() string { return "storage" }
-func (p *storagePlugin) Desc() map[string]string {
-	return map[string]string{"provides": "svc/storage"}
-}
-func (p *storagePlugin) Config() map[string]string { return map[string]string{"kind": "kv"} }
-
-func (p *storagePlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
-	p.ctx = ctx
-	// 配置层：宿主 Intercept 下发的层序列，root-first 依次合并
-	for _, layer := range ctx.Config("storage") {
-		if s, ok := layer.(string); ok {
-			p.prefix = s
-		}
+// cap 构造 MCP 风格的能力描述(推荐但非强制)。
+func cap(desc string, props ...string) map[string]any {
+	properties := map[string]any{}
+	required := make([]string, 0, len(props))
+	for _, p := range props {
+		properties[p] = map[string]any{"type": "string"}
+		required = append(required, p)
 	}
+	return map[string]any{
+		"description": desc,
+		"inputSchema": map[string]any{"type": "object", "properties": properties, "required": required},
+	}
+}
+
+func statusOf(kv map[string]any) *map[string]any { return &kv }
+
+// logIndex 是组件对索引通知消息(TypeIndex)的统一处理。
+func logIndex(p string, m GoTenon.Message) {
+	if ev, ok := m.Data.(GoTenon.IndexEvent); ok {
+		fmt.Printf("[%s] 索引事件: %-6s %s\n", p, ev.Kind, ev.Plugin)
+	}
+}
+
+// base 提供 PluginInfo 默认实现，组件只覆写关心的钩子。
+type base struct{}
+
+func (base) Desc() map[string]string                  { return nil }
+func (base) Inject() []string                         { return nil }
+func (base) Status() *map[string]any                  { return nil }
+func (base) Register() error                          { return nil }
+func (base) Apply(*GoTenon.GoTenonContext, any) error { return nil }
+func (base) Start() error                             { return nil }
+func (base) Run() error                               { return nil }
+func (base) DealWithMessage(GoTenon.Message) error    { return nil }
+func (base) End() error                               { return nil }
+
+// ---------- storage：槽位 + 副作用 + 能力 ----------
+
+type storage struct {
+	base
+	mu   sync.Mutex
+	host Game
+	kv   map[string]string
+}
+
+func (p *storage) Name() string            { return "storage" }
+func (p *storage) Desc() map[string]string { return map[string]string{"provides": "svc/storage"} }
+func (p *storage) Status() *map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return statusOf(map[string]any{"state": "ready", "keys": len(p.kv)})
+}
+
+func (p *storage) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+	slot := ctx.SlotOf("game/api")
+	if slot == nil {
+		return errors.New("storage: 宿主 API game/api 不可用")
+	}
+	p.host = slot.Value.(Game)
+	p.kv = map[string]string{}
 	ctx.Isolate("svc/storage")
 	ctx.SlotOf("svc/storage").Value = p
-	ctx.Register(func() error {
-		p.mu.Lock()
-		p.closed = true
-		p.mu.Unlock()
-		fmt.Println("[storage] disposer：落盘并关闭")
+	p.host.Provide("svc/storage", p)
+	ctx.Register(func() error { // 卸载时逆序回收
+		p.host.Log("[storage] disposer：落盘并关闭")
 		return nil
 	})
 	return nil
 }
 
-func (p *storagePlugin) Put(k, v string) {
+func (p *storage) Put(k, v string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed {
-		fmt.Println("[storage] 已关闭，拒绝写入 ← 边界")
-		return
+	p.kv[k] = v
+	fmt.Printf("[storage] 写入 %s=%s\n", k, v)
+}
+
+func (p *storage) Get(k string) (string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	v, ok := p.kv[k]
+	return v, ok
+}
+
+func (p *storage) DealWithMessage(m GoTenon.Message) error {
+	switch m.Type {
+	case GoTenon.TypeIndex:
+		logIndex("storage", m)
+	case GoTenon.TypeRaw:
+		if args, ok := m.Data.(map[string]any); ok {
+			k, _ := args["key"].(string)
+			v, _ := args["value"].(string)
+			p.Put(k, v)
+		}
 	}
-	fmt.Printf("[storage] 写入 %s%s=%s\n", p.prefix, k, v)
+	return nil
 }
 
-// ---------- render：宿主 API + 槽位 + 消息 ----------
+func (p *storage) Function() map[string]any {
+	return map[string]any{
+		"storage.put": cap("写入键值", "key", "value"),
+		"storage.get": cap("读取键值", "key"),
+	}
+}
+func (p *storage) ExecuteFunction(any) {}
 
-type renderPlugin struct {
-	basePlugin
+// ---------- render：能力 + 类型化消息 ----------
+
+type render struct {
+	base
 	host Game
-	r    *consoleRenderer
 }
 
-func (p *renderPlugin) Name() string { return "render" }
-func (p *renderPlugin) Desc() map[string]string {
-	return map[string]string{"provides": "game/render"}
+func (p *render) Name() string            { return "render" }
+func (p *render) Desc() map[string]string { return map[string]string{"provides": "game/render"} }
+func (p *render) Status() *map[string]any {
+	return statusOf(map[string]any{"state": "ready", "fps": 60})
 }
 
-func (p *renderPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *render) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	slot := ctx.SlotOf("game/api")
 	if slot == nil {
 		return errors.New("render: 宿主 API game/api 不可用")
 	}
 	p.host = slot.Value.(Game)
-	p.r = &consoleRenderer{host: p.host}
 	ctx.Isolate("game/render")
-	ctx.SlotOf("game/render").Value = p.r
+	ctx.SlotOf("game/render").Value = p
+	p.host.Provide("game/render", p)
 	ctx.Register(func() error {
-		p.r.closed = true
-		fmt.Println("[render] disposer：渲染器下线")
+		p.host.Log("[render] disposer：渲染器下线")
 		return nil
 	})
 	return nil
 }
 
-func (p *renderPlugin) DealWithMessage(ctx context.Context) error {
-	p.r.Draw("游戏帧")
+func (p *render) Draw(text string) {
+	p.host.Log(fmt.Sprintf("绘制 %q (level=%d)", text, p.host.PlayerLevel()))
+}
+
+func (p *render) DealWithMessage(m GoTenon.Message) error {
+	switch m.Type {
+	case GoTenon.TypeIndex:
+		logIndex("render", m)
+	case GoTenon.TypeRaw:
+		if s, ok := m.Data.(string); ok {
+			p.Draw(s)
+		} else {
+			p.Draw("游戏帧")
+		}
+	}
 	return nil
 }
 
-type consoleRenderer struct {
-	host   Game
-	closed bool
+func (p *render) Function() map[string]any {
+	return map[string]any{"render.draw": cap("绘制文本", "text")}
 }
+func (p *render) ExecuteFunction(any) {}
 
-func (r *consoleRenderer) Draw(text string) {
-	if r.closed {
-		fmt.Println("[render] 过期引用：该渲染器已随插件卸载 ← 边界")
-		return
-	}
-	suffix := ""
-	if hud := r.host.HUD(); hud != "" {
-		suffix = " | " + hud
-	}
-	r.host.Log(fmt.Sprintf("绘制 %q (level=%d)%s", text, r.host.PlayerLevel(), suffix))
-}
+// ---------- hud：硬依赖 + 卸载清理 ----------
 
-func (r *consoleRenderer) Closed() bool { return r.closed }
-
-// ---------- hud：硬依赖 + 跨插件服务 + 卸载清理 ----------
-
-type hudPlugin struct {
-	basePlugin
+type hud struct {
+	base
 	host Game
-	r    Renderer
+	r    *render
 }
 
-func (p *hudPlugin) Name() string { return "hud" }
-func (p *hudPlugin) Desc() map[string]string {
-	return map[string]string{"inject": "render"}
+func (p *hud) Name() string            { return "hud" }
+func (p *hud) Desc() map[string]string { return map[string]string{"inject": "render"} }
+func (p *hud) Inject() []string        { return []string{"render"} }
+func (p *hud) Status() *map[string]any {
+	if p.host == nil {
+		return statusOf(map[string]any{"state": "pending"})
+	}
+	return statusOf(map[string]any{"state": "ready", "hud": p.host.HUD()})
 }
-func (p *hudPlugin) Inject() []string { return []string{"render"} }
 
-func (p *hudPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *hud) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	slot := ctx.SlotOf("game/api")
 	if slot == nil {
 		return errors.New("hud: 宿主 API game/api 不可用")
 	}
 	p.host = slot.Value.(Game)
-	v, ok := p.host.Service("render", "game/render")
+	v, ok := p.host.Service("game/render")
 	if !ok {
 		return errors.New("hud: render 服务不可用")
 	}
-	p.r = v.(Renderer)
+	p.r = v.(*render)
 	p.r.Draw("HUD 初始化")
 	p.host.SetHUD(fmt.Sprintf("HP %d", p.host.PlayerLevel()))
 	ctx.Register(func() error {
 		p.host.SetHUD("")
-		fmt.Println("[hud] disposer：HUD 清空")
+		p.host.Log("[hud] disposer：HUD 清空")
 		return nil
 	})
 	return nil
 }
 
-func (p *hudPlugin) DealWithMessage(ctx context.Context) error {
+func (p *hud) DealWithMessage(m GoTenon.Message) error {
+	if m.Type == GoTenon.TypeIndex {
+		logIndex("hud", m)
+		return nil
+	}
 	p.r.Draw("HUD 刷新")
 	return nil
 }
 
-// ---------- quest：Effect 事务组（首次初始化失败，Update 后恢复） ----------
+// ---------- quest：Effect 事务组(首次失败，Update 后恢复) ----------
 
-type questConfig struct {
-	failInit bool
+type questConfig struct{ Fail bool }
+
+type quest struct{ base }
+
+func (p *quest) Name() string            { return "quest" }
+func (p *quest) Desc() map[string]string { return map[string]string{"provides": "svc/quest"} }
+func (p *quest) Inject() []string        { return []string{"storage"} }
+func (p *quest) Status() *map[string]any {
+	return statusOf(map[string]any{"state": "ready", "quests": 1})
 }
 
-type questService struct{ name string }
-
-type questPlugin struct {
-	basePlugin
-}
-
-func (p *questPlugin) Name() string { return "quest" }
-func (p *questPlugin) Desc() map[string]string {
-	return map[string]string{"provides": "svc/quest"}
-}
-func (p *questPlugin) Inject() []string { return []string{"storage"} }
-
-func (p *questPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *quest) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	c, _ := cfg.(questConfig)
-	// Effect：body 期间注册的副作用是一个可整体回收的组；
-	// body 失败时半成品立即逆序回收，成功则整体登记到父 scope。
 	_, err := ctx.Effect(func() error {
-		ctx.Register(func() error {
-			fmt.Println("[quest] disposer：任务索引回收")
-			return nil
-		})
-		if c.failInit {
+		ctx.Register(func() error { fmt.Println("[quest] disposer：任务索引回收"); return nil })
+		if c.Fail {
 			return errors.New("任务数据损坏")
 		}
 		_, err := ctx.Effect(func() error {
-			ctx.Register(func() error {
-				fmt.Println("[quest] disposer：任务计时器回收")
-				return nil
-			})
+			ctx.Register(func() error { fmt.Println("[quest] disposer：任务计时器回收"); return nil })
 			return nil
 		}, "quest-timers")
 		return err
@@ -227,35 +262,48 @@ func (p *questPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 		return fmt.Errorf("quest: %w", err)
 	}
 	ctx.Isolate("svc/quest")
-	ctx.SlotOf("svc/quest").Value = &questService{name: "主线任务"}
+	ctx.SlotOf("svc/quest").Value = p
 	return nil
 }
 
+func (p *quest) Function() map[string]any {
+	return map[string]any{"quest.summary": cap("生成任务摘要", "quest_id")}
+}
+func (p *quest) ExecuteFunction(any) {}
+
 // ---------- ai：多依赖 + 常驻协程 + 消息处理 ----------
 
-type aiPlugin struct {
-	basePlugin
-	host Game
-	stop chan struct{}
-	mu   sync.Mutex
-	tick int
+type ai struct {
+	base
+	mu      sync.Mutex
+	stop    chan struct{}
+	tick    int
+	host    Game
+	storage *storage
 }
 
-func (p *aiPlugin) Name() string { return "ai" }
-func (p *aiPlugin) Desc() map[string]string {
-	return map[string]string{"inject": "quest, render"}
+func (p *ai) Name() string      { return "ai" }
+func (p *ai) Inject() []string  { return []string{"quest", "storage"} }
+func (p *ai) Desc() map[string]string {
+	return map[string]string{"inject": "quest, storage"}
 }
-func (p *aiPlugin) Inject() []string { return []string{"quest", "render"} }
+func (p *ai) Status() *map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return statusOf(map[string]any{"state": "running", "tick": p.tick})
+}
 
-func (p *aiPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *ai) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	slot := ctx.SlotOf("game/api")
 	if slot == nil {
 		return errors.New("ai: 宿主 API game/api 不可用")
 	}
 	p.host = slot.Value.(Game)
+	if v, ok := p.host.Service("svc/storage"); ok {
+		p.storage = v.(*storage)
+	}
 	p.stop = make(chan struct{})
-	// 常驻协程的停止信号登记为副作用：卸载时自动回收，不留死协程
-	ctx.Register(func() error {
+	ctx.Register(func() error { // 常驻协程停止信号登记为副作用
 		p.mu.Lock()
 		defer p.mu.Unlock()
 		select {
@@ -266,15 +314,12 @@ func (p *aiPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 		}
 		return nil
 	})
-	if v, ok := ctx.GetInfo("version"); ok {
-		fmt.Printf("[ai] 沿祖先链读到宿主版本: %v\n", v)
-	}
 	return nil
 }
 
-func (p *aiPlugin) Run() error {
+func (p *ai) Run() error {
 	go func() {
-		ticker := time.NewTicker(150 * time.Millisecond)
+		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
@@ -292,107 +337,108 @@ func (p *aiPlugin) Run() error {
 	return nil
 }
 
-func (p *aiPlugin) DealWithMessage(ctx context.Context) error {
+func (p *ai) DealWithMessage(m GoTenon.Message) error {
+	if m.Type == GoTenon.TypeIndex {
+		logIndex("ai", m)
+		return nil
+	}
 	p.host.Log("ai 收到行动指令")
-	if v, ok := p.host.Service("quest", "svc/quest"); ok {
-		p.host.Log("ai 读取任务: " + v.(*questService).name)
-	}
-	if v, ok := p.host.Service("storage", "svc/storage"); ok {
-		v.(*storagePlugin).Put("last_action", "explore")
+	if p.storage != nil {
+		p.storage.Put("last_action", "explore")
 	}
 	return nil
 }
 
-// ---------- slow：装载超时（Apply 故意超过 Loader.Timeout） ----------
+func (p *ai) Function() map[string]any {
+	return map[string]any{"ai.think": cap("思考下一步行动")}
+}
+func (p *ai) ExecuteFunction(any) {}
 
-type slowPlugin struct{ basePlugin }
+// ---------- watcher：订阅索引通知(TypeIndex 消息) ----------
 
-func (p *slowPlugin) Name() string { return "slow" }
-func (p *slowPlugin) Desc() map[string]string {
-	return map[string]string{"note": "装载超时演示"}
+type watcher struct {
+	base
+	mu   sync.Mutex
+	seen []string
 }
 
-func (p *slowPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
-	ctx.SetInfo("slow/state", "loading")
-	time.Sleep(250 * time.Millisecond)
-	if _, ok := ctx.GetInfo("slow/state"); !ok {
-		fmt.Println("[slow] Apply 超时后自身上下文已被清空，但协程仍在执行 ← 边界")
+func (p *watcher) Name() string            { return "watcher" }
+func (p *watcher) Desc() map[string]string { return map[string]string{"subscribes": "index"} }
+func (p *watcher) Status() *map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return statusOf(map[string]any{"state": "ready", "seen": len(p.seen)})
+}
+
+func (p *watcher) DealWithMessage(m GoTenon.Message) error {
+	if m.Type != GoTenon.TypeIndex {
+		return nil
 	}
+	ev, ok := m.Data.(GoTenon.IndexEvent)
+	if !ok {
+		return nil
+	}
+	p.mu.Lock()
+	p.seen = append(p.seen, ev.Kind+" "+ev.Plugin)
+	p.mu.Unlock()
+	fmt.Printf("[watcher] 收到索引通知: %-6s %s\n", ev.Kind, ev.Plugin)
 	return nil
 }
 
-func (p *slowPlugin) Start() error {
-	fmt.Println("[slow] Start 在超时回滚之后仍被调用 ← 边界")
-	return nil
-}
+// ---------- orphan / late：缺失依赖 → PENDING，补注册后自动装载 ----------
 
-func (p *slowPlugin) Run() error {
-	fmt.Println("[slow] Run 在超时回滚之后仍被调用 ← 边界")
-	return nil
-}
+type orphan struct{ base }
 
-// ---------- orphan / late：缺失依赖 → PENDING，依赖补注册后自动装载 ----------
-
-type orphanPlugin struct{ basePlugin }
-
-func (p *orphanPlugin) Name() string { return "orphan" }
-func (p *orphanPlugin) Desc() map[string]string {
-	return map[string]string{"inject": "late"}
-}
-func (p *orphanPlugin) Inject() []string { return []string{"late"} }
-
-func (p *orphanPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *orphan) Name() string            { return "orphan" }
+func (p *orphan) Desc() map[string]string { return map[string]string{"inject": "late"} }
+func (p *orphan) Inject() []string        { return []string{"late"} }
+func (p *orphan) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	fmt.Println("[orphan] 依赖就绪，从 PENDING 自动装载")
 	return nil
 }
 
-type latePlugin struct{ basePlugin }
+type late struct{ base }
 
-func (p *latePlugin) Name() string { return "late" }
-
-func (p *latePlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+func (p *late) Name() string { return "late" }
+func (p *late) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
 	fmt.Println("[late] 装载完成，开始为依赖者提供服务")
-	return nil
-}
-
-// ---------- worker-a/b/c + batch：并行装载演示（扇入依赖） ----------
-
-type workerPlugin struct {
-	basePlugin
-	id    string
-	delay time.Duration
-}
-
-func (p *workerPlugin) Name() string { return "worker-" + p.id }
-
-func (p *workerPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
-	start := time.Now()
-	fmt.Printf("[%s] Apply 开始 @%s\n", p.Name(), start.Format("15:04:05.000"))
-	time.Sleep(p.delay)
-	fmt.Printf("[%s] Apply 结束 @%s（耗时 %s）\n",
-		p.Name(), time.Now().Format("15:04:05.000"), time.Since(start).Round(time.Millisecond))
-	return nil
-}
-
-// batchPlugin 只依赖三个互不依赖的 worker：启用它即可触发一个并行波次。
-type batchPlugin struct{ basePlugin }
-
-func (p *batchPlugin) Name() string     { return "batch" }
-func (p *batchPlugin) Inject() []string { return []string{"worker-a", "worker-b", "worker-c"} }
-
-func (p *batchPlugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
-	fmt.Println("[batch] 依赖全部就绪，装载完成")
 	return nil
 }
 
 // ---------- cycleA / cycleB：依赖成环，注册期拒绝 ----------
 
-type cycleA struct{ basePlugin }
+type cycleA struct{ base }
 
 func (p *cycleA) Name() string     { return "cycleA" }
 func (p *cycleA) Inject() []string { return []string{"cycleB"} }
 
-type cycleB struct{ basePlugin }
+type cycleB struct{ base }
 
 func (p *cycleB) Name() string     { return "cycleB" }
 func (p *cycleB) Inject() []string { return []string{"cycleA"} }
+
+// ---------- worker / batch：并行装载演示 ----------
+
+type worker struct {
+	base
+	id    string
+	delay time.Duration
+}
+
+func (p *worker) Name() string { return "worker-" + p.id }
+func (p *worker) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+	start := time.Now()
+	fmt.Printf("[%s] Apply 开始 @%s\n", p.Name(), start.Format("15:04:05.000"))
+	time.Sleep(p.delay)
+	fmt.Printf("[%s] Apply 结束(耗时 %s)\n", p.Name(), time.Since(start).Round(time.Millisecond))
+	return nil
+}
+
+type batch struct{ base }
+
+func (p *batch) Name() string     { return "batch" }
+func (p *batch) Inject() []string { return []string{"worker-a", "worker-b", "worker-c"} }
+func (p *batch) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {
+	fmt.Println("[batch] 依赖全部就绪，装载完成")
+	return nil
+}

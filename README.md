@@ -28,11 +28,13 @@ GoTenon（榫卯）取「构件咬合、可拆可换」之意，是一个宿主�
 ## 快速开始
 
 ```bash
-cd example && go run .
+cd example/game_example && go run .        # 游戏主进程模拟
+cd example/web_example  && go run .        # 在线服务网站 + 路由/gRPC 扩展
+cd example/microservice_example && go run . # 微服务插件版(发现/负载均衡/拦截器/熔断/追踪)
 ```
 
-最小示例（完整可运行版本见 [example/main.go](example/main.go)，
-插件实现见 [example/plugin.go](example/plugin.go)）：
+最小示例（完整可运行版本见 [example/game_example/main.go](example/game_example/main.go)，
+插件实现见 [example/game_example/plugin.go](example/game_example/plugin.go)）：
 
 ```go
 package main
@@ -213,20 +215,25 @@ err := GoTenon.Run(                    // 独立启动
 
 | 文件 | 职责 |
 |---|---|
-| `context.go` | 上下文树、作用域（Isolate / IsolateLabel / Intercept）、Info |
+| `scope.go` | 上下文树、作用域（Isolate / IsolateLabel / Intercept）、Info |
 | `effect.go` | 可逆副作用：`Disposer`、effect scope、逆序回收 |
-| `plugin.go` | `PluginInfo` 插件契约 |
+| `plugin.go` | `PluginInfo` 插件契约与可选接口（`Contextual` / `FunctionOffer`） |
 | `runtime.go` | `PluginTable` 与 `PluginRuntime` 运行时状态 |
-| `manager.go` | 中央管理器：注册 / 启停 / 读取更新 / 可用性 / 消息路由 |
-| `graph.go` | 依赖图：建边、环检测、加载闭包、依赖就绪判断 |
-| `converge.go` | 收敛调度：装载 / 卸载波次 |
+| `manager.go` | 中央管理器：注册 / 启停 / 读取更新 / 可用性 / 消息与信号调度 |
+| `deps.go` | 依赖图：建边、环检测、加载闭包、依赖就绪判断 |
+| `schedule.go` | 收敛调度：装载 / 卸载波次 |
 | `lifecycle.go` | 单个插件的装载卸载、上下文清理、并行与超时 |
-| `message.go` | 消息模型与管道处理器 |
+| `message.go` | 内核消息模型（`MessageType` / `Message`）与默认系统处理器 |
+| `signal.go` | 信号表：组件向内核表达意图（主动关闭 / 申请启停 / 故障上报等） |
+| `index.go` | 内核私有索引表：能力 / 状态索引、服务发现与订阅 |
+| `innerio.go` | `InnerIO`：组件间通信接口 |
 | `loader.go` | `Loader` 扩展钩子 |
 | `logger.go` | 日志出口 |
 | `errors.go` | 错误码与 `CordisError` |
-| `enter.go` | `Run` 入口与 `Option` |
-| `example/` | 独立模块示例：游戏主进程模拟（`main.go` + `plugin.go`，经 `replace` 引用根模块） |
+| `run.go` | `Run` 入口与 `Option` |
+| `example/game_example/` | 独立模块示例：游戏主进程模拟（`main.go` + `plugin.go`，经 `replace` 引用根模块） |
+| `example/web_example/` | 独立模块示例：在线服务网站 + 可撤销路由 / gRPC 微服务扩展（按职责拆分：`base.go` / `kernel_http.go` / `kernel_grpc.go` / `kernel_discovery.go` / `users.go` / `admin.go` / `ratelimit.go` / `greeter.go` / `gateway.go` / `watcher.go` + `main.go` + `service.go`） |
+| `example/microservice_example/` | 独立模块示例：微服务插件版（服务发现 / 负载均衡 / 鉴权限流熔断追踪拦截器插件 / 多实例灰度，`DESIGN.md` + `main.go` + `plugin.go` + `service.go`） |
 
 ## 设计原则
 
@@ -258,12 +265,15 @@ err := GoTenon.Run(                    // 独立启动
 ```bash
 go build ./...          # 构建内核
 go vet ./...            # 静态检查
-cd example; go run .    # 运行示例（独立模块）
+cd example/game_example; go run .    # 运行示例（独立模块）
 ```
 
 测试用例待补，是路线图 v0.2 的首要目标。
 
 ## 文档
 
+- [docs/PLUGIN_GUIDE.md](docs/PLUGIN_GUIDE.md) —— 插件系统设计指南:如何设计规范插件、如何使用与调用内核功能
 - [docs/architecture.html](docs/architecture.html) —— 架构图
 - [docs/ROADMAP.md](docs/ROADMAP.md) —— 功能规划与里程碑
+- [example/web_example/DESIGN.md](example/web_example/DESIGN.md) —— 在线服务网站 + 路由 / gRPC 微服务扩展设计文档
+- [example/microservice_example/DESIGN.md](example/microservice_example/DESIGN.md) —— 微服务插件版设计文档(发现 / 负载均衡 / 拦截器 / 熔断 / 追踪)
