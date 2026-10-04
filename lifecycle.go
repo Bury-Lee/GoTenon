@@ -42,7 +42,8 @@ func (m *Manager) loadBatch(batch []*PluginRuntime) error {
 	}
 	parallel(limit, len(batch), run)
 
-	// 状态由调度者统一写回：成功的置 Ready，失败的置 Failed 并记 Err
+	// 状态由调度者统一写回：成功的置 Ready，失败的置 Failed 并记 Err。
+	// 同时增量维护消息面:成功装载即登记为可投递(同波收敛中后续插件 Apply 即可发给它),
 	var firstErr error
 	for i, rt := range batch {
 		m.logf(LevelDebug, "plugin %q load finished in %s", names[i], durations[i].Round(time.Millisecond))
@@ -50,6 +51,7 @@ func (m *Manager) loadBatch(batch []*PluginRuntime) error {
 			rt.State = Failed
 			rt.Err = errs[i]
 			rt.Missing = nil
+			m.routerRemove(names[i])
 			m.logf(LevelWarn, "%v", errs[i])
 			if firstErr == nil {
 				firstErr = errs[i]
@@ -59,6 +61,7 @@ func (m *Manager) loadBatch(batch []*PluginRuntime) error {
 		rt.State = Ready
 		rt.Err = nil
 		rt.Missing = nil
+		m.routerAdd(names[i], rt.Plugin)
 	}
 	return firstErr
 }
@@ -75,10 +78,12 @@ func (m *Manager) unloadBatch(batch []*PluginRuntime) error {
 	}
 	parallel(limit, len(batch), func(i int) { errs[i] = m.unloadOne(batch[i]) })
 
-	// 卸载完成后统一写回：上下文已清理；仍启用则回到 Pending 等重装
+	// 卸载完成后统一写回：上下文已清理；仍启用则回到 Pending 等重装。
+	// 同时从消息面摘除,下线的插件立即不再可投递(增量 O(变更数))。
 	var firstErr error
 	for i, rt := range batch {
 		rt.Context = nil
+		m.routerRemove(rt.Plugin.Name())
 		if rt.Enable {
 			rt.State = Pending
 		} else {

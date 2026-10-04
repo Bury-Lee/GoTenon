@@ -67,21 +67,13 @@ func (p *DefaultMessageProcesser) Handle(msg *Message) (*Message, error) {
 }
 
 // deliver 把 Message 原封投递给目标组件；内核不替组件解包。
+// 走消息面 router(独立锁)而非生命周期锁,故装载期(Apply/Start/Run)也能安全投递。
 func (p *DefaultMessageProcesser) deliver(msg *Message) (*Message, error) {
 	m := p.Manager
-	m.mu.Lock()
-	rt := m.rt[msg.Name]
-	if rt == nil {
-		m.mu.Unlock()
-		return nil, newErr(ErrNotProvided, "manager: plugin %q not registered", msg.Name)
+	plugin, ok := m.router.lookup(msg.Name)
+	if !ok {
+		return nil, newErr(ErrNotProvided, "manager: plugin %q not provided", msg.Name)
 	}
-	if !rt.Loaded() {
-		m.mu.Unlock()
-		return nil, newErr(ErrNotProvided, "manager: plugin %q not loaded", msg.Name)
-	}
-	plugin := rt.Plugin
-	m.mu.Unlock() // 调用组件前释放锁，避免组件回调 Manager 造成死锁
-
 	err := recoverToError(func() error { return plugin.DealWithMessage(*msg) })
 	return nil, err
 }

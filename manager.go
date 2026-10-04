@@ -12,9 +12,13 @@ type Manager struct {
 	Logger      Logger // 框架日志出口；nil 静默
 	root        *GoTenonContext
 	rt          map[string]*PluginRuntime
-	mu          sync.Mutex // 串行化公开操作
+	mu          sync.Mutex // 串行化公开操作(生命周期锁)
+
+	// router 是消息路由表:名字 → 已装载插件
+	router *router
 
 	// Processor 是消息/信号的默认系统实现；nil 时用内核默认实现。
+	// 约定:启动后不可再改写(Dispatcher 读取时不加锁)。
 	Processor MessageProcesser
 	// Signals 是信号注册表；nil 时用内置信号表。
 	Signals *SignalTable
@@ -34,6 +38,7 @@ func NewManager(root *GoTenonContext) *Manager {
 		PluginTable: PluginTable{Info: make(map[string]PluginInfo)},
 		root:        root,
 		rt:          make(map[string]*PluginRuntime),
+		router:      newRouter(),
 		Signals:     DefaultSignalTable(),
 		index:       newKernelIndex(),
 	}
@@ -50,6 +55,7 @@ func (m *Manager) lookup(name string) (*PluginRuntime, error) {
 	return rt, nil
 }
 
+// TODO:以后减少这样的没必要的检查,出现问题直接报错就是了
 // ensure 惰性初始化零值 Manager（enter.go 的 var PluginManager Manager）。
 func (m *Manager) ensure() {
 	if m.PluginTable.Info == nil {
@@ -57,6 +63,9 @@ func (m *Manager) ensure() {
 	}
 	if m.rt == nil {
 		m.rt = make(map[string]*PluginRuntime)
+	}
+	if m.router == nil {
+		m.router = newRouter()
 	}
 	if m.root == nil {
 		m.root = New("root")
@@ -155,6 +164,7 @@ func (m *Manager) deleteLocked(name string) error {
 	delete(m.PluginTable.Info, name)
 	delete(m.rt, name)
 	m.relink()
+	m.routerRemove(name)
 	m.refreshIndexLocked(name)
 	if m.index != nil {
 		m.index.removeSubscriber(name)
@@ -309,10 +319,9 @@ func (m *Manager) Send(msg Message) error {
 }
 
 // Dispatch 把消息交给 MessageProcesser 处理，返回可选的应答消息。
+// 不取生命周期锁:挂在消息面上,故装载期发消息不会死锁(Processor 启动后不可改写)。
 func (m *Manager) Dispatch(msg *Message) (*Message, error) {
-	m.mu.Lock()
 	p := m.Processor
-	m.mu.Unlock()
 	if p == nil {
 		p = &DefaultMessageProcesser{Manager: m}
 	}
@@ -390,6 +399,7 @@ func (m *Manager) markFaultLocked(name string) error {
 	}
 	rt.State = Failed
 	rt.Err = newErr(ErrSignalUnhandled, "signal: fault reported by %q", name)
+	m.routerRemove(name) // Failed 不再可投递
 	m.refreshIndexLocked(name)
 	return nil
 }
