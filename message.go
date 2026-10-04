@@ -9,7 +9,8 @@ package GoTenon
 // MessageType 是信封上的类型标签：0–15 为系统保留，16+ 为组件自定义。
 
 // MessageType 是消息类型码(discriminator)。
-type MessageType int
+// 采用 int16:系统保留 0–15 + 组件自定义 16+,足够用;也便于将来做定长信封/序列化。
+type MessageType int16
 
 const (
 	// ---- 系统保留段：0–15(共 16 个)----
