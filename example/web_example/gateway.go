@@ -27,7 +27,7 @@ func (p *gatewayPlugin) Inject() []string {
 func (p *gatewayPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "/api/greet", "note": "HTTP→gRPC 桥接"}
 }
-func (p *gatewayPlugin) Status() *map[string]any {
+func (p *gatewayPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.applied {

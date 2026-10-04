@@ -29,7 +29,7 @@ func (p *usersPlugin) Inject() []string { return []string{"http"} }
 func (p *usersPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "/api/users,/api/health"}
 }
-func (p *usersPlugin) Status() *map[string]any {
+func (p *usersPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.applied {

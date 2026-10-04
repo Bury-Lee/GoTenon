@@ -40,7 +40,7 @@ func cap(desc string, props ...string) map[string]any {
 	}
 }
 
-func statusOf(kv map[string]any) *map[string]any { return &kv }
+func statusOf(kv map[string]any) map[string]any { return kv }
 
 // logIndex 是组件对索引通知消息(TypeIndex)的统一处理。
 func logIndex(p string, m GoTenon.Message) {
@@ -54,7 +54,7 @@ type base struct{}
 
 func (base) Desc() map[string]string                  { return nil }
 func (base) Inject() []string                         { return nil }
-func (base) Status() *map[string]any                  { return nil }
+func (base) Status() map[string]any                  { return nil }
 func (base) Register() error                          { return nil }
 func (base) Apply(*GoTenon.GoTenonContext, any) error { return nil }
 func (base) Start() error                             { return nil }
@@ -73,7 +73,7 @@ type storage struct {
 
 func (p *storage) Name() string            { return "storage" }
 func (p *storage) Desc() map[string]string { return map[string]string{"provides": "svc/storage"} }
-func (p *storage) Status() *map[string]any {
+func (p *storage) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return statusOf(map[string]any{"state": "ready", "keys": len(p.kv)})
@@ -141,7 +141,7 @@ type render struct {
 
 func (p *render) Name() string            { return "render" }
 func (p *render) Desc() map[string]string { return map[string]string{"provides": "game/render"} }
-func (p *render) Status() *map[string]any {
+func (p *render) Status() map[string]any {
 	return statusOf(map[string]any{"state": "ready", "fps": 60})
 }
 
@@ -195,7 +195,7 @@ type hud struct {
 func (p *hud) Name() string            { return "hud" }
 func (p *hud) Desc() map[string]string { return map[string]string{"inject": "render"} }
 func (p *hud) Inject() []string        { return []string{"render"} }
-func (p *hud) Status() *map[string]any {
+func (p *hud) Status() map[string]any {
 	if p.host == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -241,7 +241,7 @@ type quest struct{ base }
 func (p *quest) Name() string            { return "quest" }
 func (p *quest) Desc() map[string]string { return map[string]string{"provides": "svc/quest"} }
 func (p *quest) Inject() []string        { return []string{"storage"} }
-func (p *quest) Status() *map[string]any {
+func (p *quest) Status() map[string]any {
 	return statusOf(map[string]any{"state": "ready", "quests": 1})
 }
 
@@ -287,7 +287,7 @@ func (p *ai) Inject() []string  { return []string{"quest", "storage"} }
 func (p *ai) Desc() map[string]string {
 	return map[string]string{"inject": "quest, storage"}
 }
-func (p *ai) Status() *map[string]any {
+func (p *ai) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return statusOf(map[string]any{"state": "running", "tick": p.tick})
@@ -364,7 +364,7 @@ type watcher struct {
 
 func (p *watcher) Name() string            { return "watcher" }
 func (p *watcher) Desc() map[string]string { return map[string]string{"subscribes": "index"} }
-func (p *watcher) Status() *map[string]any {
+func (p *watcher) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return statusOf(map[string]any{"state": "ready", "seen": len(p.seen)})

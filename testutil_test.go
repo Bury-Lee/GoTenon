@@ -24,7 +24,7 @@ type testPlugin struct {
 func (p *testPlugin) Name() string            { return p.name }
 func (p *testPlugin) Desc() map[string]string { return nil }
 func (p *testPlugin) Inject() []string        { return p.inject }
-func (p *testPlugin) Status() *map[string]any { return nil }
+func (p *testPlugin) Status() map[string]any { return nil }
 func (p *testPlugin) Register() error         { return nil }
 
 func (p *testPlugin) Apply(ctx *GoTenonContext, cfg any) error {
@@ -69,7 +69,7 @@ type slowPlugin struct {
 func (p *slowPlugin) Name() string            { return p.name }
 func (p *slowPlugin) Desc() map[string]string { return nil }
 func (p *slowPlugin) Inject() []string        { return nil }
-func (p *slowPlugin) Status() *map[string]any { return nil }
+func (p *slowPlugin) Status() map[string]any { return nil }
 func (p *slowPlugin) Register() error         { return nil }
 
 func (p *slowPlugin) Apply(ctx *GoTenonContext, cfg any) error {

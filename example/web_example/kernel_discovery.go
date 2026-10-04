@@ -21,7 +21,7 @@ func (p *discoveryPlugin) Name() string { return "discovery" }
 func (p *discoveryPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "svc/registry", "note": "服务发现"}
 }
-func (p *discoveryPlugin) Status() *map[string]any {
+func (p *discoveryPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.reg == nil {

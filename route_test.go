@@ -15,7 +15,7 @@ type recvPlugin struct {
 func (p *recvPlugin) Name() string            { return p.name }
 func (p *recvPlugin) Desc() map[string]string { return nil }
 func (p *recvPlugin) Inject() []string        { return nil }
-func (p *recvPlugin) Status() *map[string]any { return nil }
+func (p *recvPlugin) Status() map[string]any { return nil }
 func (p *recvPlugin) Register() error         { return nil }
 func (p *recvPlugin) Apply(*GoTenonContext, any) error {
 	return nil
@@ -39,7 +39,7 @@ type senderPlugin struct {
 func (p *senderPlugin) Name() string            { return p.name }
 func (p *senderPlugin) Desc() map[string]string { return nil }
 func (p *senderPlugin) Inject() []string        { return nil }
-func (p *senderPlugin) Status() *map[string]any { return nil }
+func (p *senderPlugin) Status() map[string]any { return nil }
 func (p *senderPlugin) Register() error         { return nil }
 func (p *senderPlugin) Apply(*GoTenonContext, any) error {
 	return p.m.Send(Message{Name: p.target, Type: TypeRaw, Data: "hi"})

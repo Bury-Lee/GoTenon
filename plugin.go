@@ -17,16 +17,17 @@ type PluginInfo interface {
 	// 全部依赖就绪前 Fiber 保持 PENDING，Apply 不会执行。
 	Inject() []string
 
-	Status() *map[string]any //返回一个json,这个json应该记录各种动态运行时信息,包括运行状态等,由插件自己管理.为空时表示不可用
+	Status() map[string]any //返回一个json,这个json应该记录各种动态运行时信息,包括运行状态等,由插件自己管理.为空时表示不可用
 
 	// Register 在写入插件表之前调用,
 	Register() error
 	// Apply 在依赖就绪后执行；期间通过 ctx 完成的一切注册归该 Fiber 所有，
 	// 卸载时自动逆序回收。返回错误使 Fiber 进入 FAILED（已注册的半成品会被回收）。
 	Apply(ctx *GoTenonContext, cfg any) error
-	// Start 在装载完成后调用。
+	// Start 在装载完成后调用:装载就绪即可执行的一次性动作。
 	Start() error
-	// Run 是主动运行入口，作为「常驻功能」的实现，装载后调用。
+	// Run 是保留的运行入口,装载后调用;目前多数组件留空。
+	// 它与 Start 分开保留,预留给"常驻服务 / 特殊运行模式"等用途,便于将来区分。
 	Run() error
 	// DealWithMessage 处理发给本插件的消息。内核原封投递 Message，
 	// 组件自行按 Type 解包 Data(不认识的消息类型应返回明确错误)。

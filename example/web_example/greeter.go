@@ -23,7 +23,7 @@ func (p *greeterPlugin) Inject() []string { return []string{"grpc", "discovery"}
 func (p *greeterPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "demo.Greeter"}
 }
-func (p *greeterPlugin) Status() *map[string]any {
+func (p *greeterPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.applied {

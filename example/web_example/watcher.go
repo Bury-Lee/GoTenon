@@ -20,7 +20,7 @@ type watcher struct {
 
 func (p *watcher) Name() string            { return "watcher" }
 func (p *watcher) Desc() map[string]string { return map[string]string{"subscribes": "index"} }
-func (p *watcher) Status() *map[string]any {
+func (p *watcher) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.loaded {

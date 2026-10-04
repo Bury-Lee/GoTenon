@@ -22,7 +22,7 @@ func (p *adminPlugin) Inject() []string { return []string{"http"} }
 func (p *adminPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "/admin/stats"}
 }
-func (p *adminPlugin) Status() *map[string]any {
+func (p *adminPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.applied {

@@ -270,7 +270,7 @@ func (m *Manager) refreshIndexLocked(name string) {
 	var status map[string]any
 	if rt.Plugin != nil {
 		if s := rt.Plugin.Status(); s != nil {
-			status = *s
+			status = s
 		}
 	}
 	var caps map[string]map[string]any

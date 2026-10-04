@@ -33,7 +33,7 @@ type basePlugin struct{}
 
 func (basePlugin) Desc() map[string]string                  { return nil }
 func (basePlugin) Inject() []string                         { return nil }
-func (basePlugin) Status() *map[string]any                  { return nil }
+func (basePlugin) Status() map[string]any                  { return nil }
 func (basePlugin) Register() error                          { return nil }
 func (basePlugin) Apply(*GoTenon.GoTenonContext, any) error { return nil }
 func (basePlugin) Start() error                             { return nil }
@@ -55,7 +55,7 @@ func cap(desc string, props ...string) map[string]any {
 	}
 }
 
-func statusOf(kv map[string]any) *map[string]any { return &kv }
+func statusOf(kv map[string]any) map[string]any { return kv }
 
 // logIndex 统一处理索引通知(TypeIndex);命中返回 true。
 func logIndex(p string, m GoTenon.Message) bool {
@@ -121,7 +121,7 @@ func (p *httpKernel) Name() string { return "http" }
 func (p *httpKernel) Desc() map[string]string {
 	return map[string]string{"provides": "svc/http", "note": "HTTP 入口内核"}
 }
-func (p *httpKernel) Status() *map[string]any {
+func (p *httpKernel) Status() map[string]any {
 	if p.srv == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -186,7 +186,7 @@ func (p *grpcKernel) Name() string { return "grpc" }
 func (p *grpcKernel) Desc() map[string]string {
 	return map[string]string{"provides": "svc/grpc", "note": "进程内 gRPC(多实例服务表)"}
 }
-func (p *grpcKernel) Status() *map[string]any {
+func (p *grpcKernel) Status() map[string]any {
 	if p.srv == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -230,7 +230,7 @@ func (p *discoveryPlugin) Name() string { return "discovery" }
 func (p *discoveryPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "svc/registry", "note": "服务发现"}
 }
-func (p *discoveryPlugin) Status() *map[string]any {
+func (p *discoveryPlugin) Status() map[string]any {
 	if p.reg == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -276,7 +276,7 @@ func (p *clientPlugin) Inject() []string { return []string{"grpc", "discovery"} 
 func (p *clientPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "svc/client", "note": "gRPC 客户端(选点+拦截器链)"}
 }
-func (p *clientPlugin) Status() *map[string]any {
+func (p *clientPlugin) Status() map[string]any {
 	if p.cli == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -332,7 +332,7 @@ func (p *tracingPlugin) Inject() []string { return []string{"grpc", "client"} }
 func (p *tracingPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "svc/trace", "note": "链路追踪(双端拦截器)"}
 }
-func (p *tracingPlugin) Status() *map[string]any {
+func (p *tracingPlugin) Status() map[string]any {
 	if p.tracer == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -411,7 +411,7 @@ func (p *ratelimitPlugin) Inject() []string { return []string{"tracing"} }
 func (p *ratelimitPlugin) Desc() map[string]string {
 	return map[string]string{"note": "服务端方法级限流"}
 }
-func (p *ratelimitPlugin) Status() *map[string]any {
+func (p *ratelimitPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.counts == nil {
@@ -479,7 +479,7 @@ func (p *authPlugin) Inject() []string { return []string{"ratelimit"} }
 func (p *authPlugin) Desc() map[string]string {
 	return map[string]string{"note": "服务端 token 鉴权"}
 }
-func (p *authPlugin) Status() *map[string]any {
+func (p *authPlugin) Status() map[string]any {
 	if p.token == "" {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -544,7 +544,7 @@ func (p *circuitbreakerPlugin) Inject() []string { return []string{"tracing"} }
 func (p *circuitbreakerPlugin) Desc() map[string]string {
 	return map[string]string{"note": "客户端熔断(连续失败即开路)"}
 }
-func (p *circuitbreakerPlugin) Status() *map[string]any {
+func (p *circuitbreakerPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.breakers == nil {
@@ -649,7 +649,7 @@ func (p *usersPlugin) Inject() []string { return []string{"grpc", "discovery"} }
 func (p *usersPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "demo.Users/Get", "addr": "inproc://users-1"}
 }
-func (p *usersPlugin) Status() *map[string]any {
+func (p *usersPlugin) Status() map[string]any {
 	if !p.ready {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -726,7 +726,7 @@ func (p *ordersPlugin) Inject() []string { return []string{"client", "users"} }
 func (p *ordersPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "demo.Orders/Create", "note": "调用 demo.Users/Get"}
 }
-func (p *ordersPlugin) Status() *map[string]any {
+func (p *ordersPlugin) Status() map[string]any {
 	if !p.ready {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -808,7 +808,7 @@ func (p *greeterPlugin) Inject() []string { return []string{"grpc", "discovery"}
 func (p *greeterPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "demo.Greeter/SayHello", "addr": p.addr}
 }
-func (p *greeterPlugin) Status() *map[string]any {
+func (p *greeterPlugin) Status() map[string]any {
 	if !p.ready {
 		return statusOf(map[string]any{"state": "pending", "id": p.id})
 	}
@@ -873,7 +873,7 @@ func (p *gatewayPlugin) Inject() []string { return []string{"http", "client"} }
 func (p *gatewayPlugin) Desc() map[string]string {
 	return map[string]string{"provides": "/api/*,/debug/traces", "note": "HTTP→gRPC 桥接"}
 }
-func (p *gatewayPlugin) Status() *map[string]any {
+func (p *gatewayPlugin) Status() map[string]any {
 	if p.cli == nil {
 		return statusOf(map[string]any{"state": "pending"})
 	}
@@ -985,7 +985,7 @@ type watcherPlugin struct {
 
 func (p *watcherPlugin) Name() string            { return "watcher" }
 func (p *watcherPlugin) Desc() map[string]string { return map[string]string{"subscribes": "index"} }
-func (p *watcherPlugin) Status() *map[string]any {
+func (p *watcherPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return statusOf(map[string]any{"state": "ready", "seen": len(p.seen)})

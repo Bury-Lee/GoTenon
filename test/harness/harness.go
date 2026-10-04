@@ -55,7 +55,7 @@ type Base struct{}
 
 func (Base) Desc() map[string]string                  { return nil }
 func (Base) Inject() []string                         { return nil }
-func (Base) Status() *map[string]any                  { return nil }
+func (Base) Status() map[string]any                  { return nil }
 func (Base) Register() error                          { return nil }
 func (Base) Apply(*GoTenon.GoTenonContext, any) error { return nil }
 func (Base) Start() error                             { return nil }
@@ -93,11 +93,11 @@ func (p *Plugin) Name() string             { return p.PluginName }
 func (p *Plugin) Inject() []string         { return p.Deps }
 func (p *Plugin) Function() map[string]any { return p.Caps }
 
-func (p *Plugin) Status() *map[string]any {
+func (p *Plugin) Status() map[string]any {
 	if p.StatusMap == nil {
 		return nil
 	}
-	return &p.StatusMap
+	return p.StatusMap
 }
 
 func (p *Plugin) Apply(ctx *GoTenon.GoTenonContext, cfg any) error {

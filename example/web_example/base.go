@@ -21,7 +21,7 @@ type basePlugin struct{}
 
 func (basePlugin) Desc() map[string]string                  { return nil }
 func (basePlugin) Inject() []string                         { return nil }
-func (basePlugin) Status() *map[string]any                  { return nil }
+func (basePlugin) Status() map[string]any                  { return nil }
 func (basePlugin) Register() error                          { return nil }
 func (basePlugin) Apply(*GoTenon.GoTenonContext, any) error { return nil }
 func (basePlugin) Start() error                             { return nil }
@@ -30,7 +30,7 @@ func (basePlugin) End() error                               { return nil }
 func (basePlugin) DealWithMessage(GoTenon.Message) error    { return nil }
 
 // statusOf 把 kv 包成 PluginInfo.Status 需要的指针,空值防护由调用方保证。
-func statusOf(kv map[string]any) *map[string]any { return &kv }
+func statusOf(kv map[string]any) map[string]any { return kv }
 
 // cap 构造 MCP 风格的能力描述(推荐但非强制)。
 func cap(desc string, props ...string) map[string]any {

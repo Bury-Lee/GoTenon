@@ -28,7 +28,7 @@ func (p *httpKernel) Name() string { return "http" }
 func (p *httpKernel) Desc() map[string]string {
 	return map[string]string{"provides": "svc/http", "note": "HTTP 路由内核"}
 }
-func (p *httpKernel) Status() *map[string]any {
+func (p *httpKernel) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.addr == "" {

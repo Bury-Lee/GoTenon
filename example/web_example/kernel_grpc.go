@@ -24,7 +24,7 @@ func (p *grpcKernel) Name() string { return "grpc" }
 func (p *grpcKernel) Desc() map[string]string {
 	return map[string]string{"provides": "svc/grpc", "note": "gRPC 内核(进程内实现)"}
 }
-func (p *grpcKernel) Status() *map[string]any {
+func (p *grpcKernel) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.srv == nil {

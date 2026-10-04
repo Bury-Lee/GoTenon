@@ -26,7 +26,7 @@ func (p *ratelimitPlugin) Inject() []string { return []string{"http"} }
 func (p *ratelimitPlugin) Desc() map[string]string {
 	return map[string]string{"note": "全局限流中间件"}
 }
-func (p *ratelimitPlugin) Status() *map[string]any {
+func (p *ratelimitPlugin) Status() map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.applied {

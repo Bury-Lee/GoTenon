@@ -16,7 +16,7 @@ type recPlugin struct {
 func (p *recPlugin) Name() string            { return p.name }
 func (p *recPlugin) Desc() map[string]string { return nil }
 func (p *recPlugin) Inject() []string        { return nil }
-func (p *recPlugin) Status() *map[string]any { return &p.st }
+func (p *recPlugin) Status() map[string]any { return p.st }
 func (p *recPlugin) Register() error         { return nil }
 func (p *recPlugin) Apply(*GoTenonContext, any) error {
 	return nil
